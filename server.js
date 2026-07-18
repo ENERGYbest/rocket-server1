@@ -38,6 +38,7 @@ io.on('connection', (socket) => {
             id: roomId, name: data.name, map: data.map, 
             isPrivate: data.isPrivate, pin: data.pin, allowBots: data.allowBots,
             creator: data.creator, creatorId: socket.id,
+            matchStarted: false, // เช็คว่าเกมเริ่มไปหรือยัง
             slots: { red: [null, null, null], blue: [null, null, null] } 
         };
         socket.join(roomId);
@@ -118,6 +119,11 @@ io.on('connection', (socket) => {
             let removedId = r.slots[data.team][data.index]?.id;
             r.slots[data.team][data.index] = null;
             
+            // เตะวิญญาณออกจากหน้าจอเพื่อนเวลาคนกดออกกลางเกม!
+            if (r.matchStarted && removedId) {
+                io.to(data.roomId).emit('player_left_midgame', removedId);
+            }
+
             if (removedId === socket.id) { socket.leave(data.roomId); } 
             else if (removedId) {
                 let targetSocket = io.sockets.sockets.get(removedId);
@@ -139,16 +145,34 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('start_match', (roomId) => { if(activeRooms[roomId]) io.to(roomId).emit('match_started', activeRooms[roomId]); });
+    socket.on('start_match', (roomId) => { 
+        if(activeRooms[roomId]) {
+            activeRooms[roomId].matchStarted = true;
+            io.to(roomId).emit('match_started', activeRooms[roomId]); 
+        }
+    });
+
+    // ให้คนที่มาทีหลัง ขอกดเกิดกลางเกมได้!
+    socket.on('request_midgame_spawn', (roomId) => {
+        let r = activeRooms[roomId];
+        if(r && r.matchStarted) {
+            let sData = null; let sTeam = null; let sIdx = 0;
+            ['red','blue'].forEach(t => {
+                for(let i=0; i<3; i++) {
+                    if(r.slots[t][i] && r.slots[t][i].id === socket.id) { sData = r.slots[t][i]; sTeam = t; sIdx = i; }
+                }
+            });
+            if(sData) {
+                io.to(roomId).emit('spawn_midgame_player', { team: sTeam, index: sIdx, player: sData });
+            }
+        }
+    });
+
     socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
     socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
     socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
     socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
-
-    // ของใหม่! รับแรงกระแทกจากคนชน แล้วส่งให้เครื่องคนโดนชนกระเด็น
-    socket.on('bump_player', (data) => {
-        socket.to(data.roomId).emit('player_bumped', data);
-    });
+    socket.on('bump_player', (data) => { socket.to(data.roomId).emit('player_bumped', data); });
 
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
@@ -163,6 +187,9 @@ io.on('connection', (socket) => {
             });
 
             if(changed) {
+                // ถ้าเกมเริ่มไปแล้ว ให้เตะศพออกจากหน้าจอเพื่อนด้วย
+                if(r.matchStarted) io.to(rId).emit('player_left_midgame', socket.id);
+
                 let isEmpty = true;
                 ['red', 'blue'].forEach(t => {
                     for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; }
