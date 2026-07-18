@@ -113,7 +113,6 @@ io.on('connection', (socket) => {
                     if(s && s.type === 'player') {
                         isEmpty = false; 
                         if(t==='red') redHuman=true; else blueHuman=true;
-                        // หาคนมารับตำแหน่ง Host แทนถ้า Host ตัวจริงหนี
                         if(!nextHost && s.id !== socket.id) nextHost = s; 
                     }
                 } 
@@ -122,12 +121,10 @@ io.on('connection', (socket) => {
             if(isEmpty) { 
                 delete activeRooms[data.roomId]; cleanEmptyRooms(); 
             } else { 
-                // ระบบโอน Host
                 if (r.creatorId === socket.id && nextHost) {
                     r.creatorId = nextHost.id;
                     r.creator = nextHost.name;
                 }
-                // ถ้าทีมไหนไม่มีคนจริงเหลืออยู่เลย ให้ยุบห้องแจกชัยชนะไปเลย
                 if(r.matchStarted && (!redHuman || !blueHuman)) { 
                     r.matchStarted = false; 
                     io.to(data.roomId).emit('match_forfeit', !redHuman ? 'blue' : 'red'); 
@@ -141,10 +138,8 @@ io.on('connection', (socket) => {
         if(activeRooms[roomId]) { activeRooms[roomId].matchStarted = true; io.to(roomId).emit('match_started', activeRooms[roomId]); }
     });
 
-    // บังคับการนับคะแนน ให้ผ่านศูนย์กลาง (Host) เท่านั้น
     socket.on('goal_scored', (data) => {
         let r = activeRooms[data.roomId];
-        // ตรวจสอบว่าเป็น Host จริงๆ ค่อยให้คะแนน
         if (r && r.creatorId === socket.id) {
             io.to(data.roomId).emit('force_goal', data);
         }
@@ -155,8 +150,10 @@ io.on('connection', (socket) => {
         if(r) { r.matchStarted = false; io.to(roomId).emit('lobby_update', r); }
     });
 
-    socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
-    socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
+    // แก้ตรงนี้! ใช้ volatile เพื่อบอกให้ Server ทิ้งข้อมูลถ้าคิวเน็ตเต็ม (ลดแลค)
+    socket.on('player_move', (data) => { socket.volatile.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
+    socket.on('ball_hit', (data) => { socket.volatile.to(data.roomId).emit('ball_sync', data); });
+    
     socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
     socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
     socket.on('bump_player', (data) => { socket.to(data.roomId).emit('player_bumped', data); });
@@ -177,7 +174,6 @@ io.on('connection', (socket) => {
                         if(s && s.type === 'player') {
                             isEmpty = false; 
                             if(t==='red') redHuman=true; else blueHuman=true;
-                            // หาคนมารับตำแหน่ง Host
                             if(!nextHost && s.id !== socket.id) nextHost = s; 
                         }
                     } 
@@ -186,12 +182,10 @@ io.on('connection', (socket) => {
                 if(isEmpty) { 
                     delete activeRooms[rId]; 
                 } else { 
-                    // โอนสิทธิ์ Host
                     if (r.creatorId === socket.id && nextHost) {
                         r.creatorId = nextHost.id;
                         r.creator = nextHost.name;
                     }
-                    // เช็คห้องแตก
                     if(r.matchStarted && (!redHuman || !blueHuman)) { 
                         r.matchStarted = false; 
                         io.to(rId).emit('match_forfeit', !redHuman ? 'blue' : 'red'); 
