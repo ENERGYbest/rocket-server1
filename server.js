@@ -126,10 +126,7 @@ io.on('connection', (socket) => {
             r.slots[data.team][data.index] = null;
             
             if (r.matchStarted && removedId) io.to(data.roomId).emit('player_left_midgame', removedId);
-            
-            // เช็คว่าถ้าออกแล้วอีกฝั่งไม่มีคน ให้จบเกมเลย
             checkMatchForfeit(data.roomId);
-
             if(removedId === r.creatorId) reassignHost(r);
             
             let isEmpty = true;
@@ -170,10 +167,8 @@ io.on('connection', (socket) => {
             if(changed) {
                 if(r.matchStarted) io.to(rId).emit('player_left_midgame', socket.id);
                 checkMatchForfeit(rId);
-                
                 let isEmpty = true;
                 ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; } });
-
                 if(isEmpty) { delete activeRooms[rId]; } 
                 else { if(wasHost) reassignHost(r); io.to(rId).emit('lobby_update', r); }
             }
