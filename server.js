@@ -20,62 +20,7 @@ function cleanEmptyRooms() {
     io.emit('update_rooms', Object.values(activeRooms));
 }
 
-function checkMatchForfeit(roomId) {
-    let r = activeRooms[roomId];
-    if(r && r.matchStarted) {
-        let redHas = false, blueHas = false;
-        for(let i=0; i<3; i++) {
-            if(r.slots['red'][i] && r.slots['red'][i].type === 'player') redHas = true;
-            if(r.slots['blue'][i] && r.slots['blue'][i].type === 'player') blueHas = true;
-        }
-        if(!redHas || !blueHas) {
-            r.matchStarted = false;
-            io.to(roomId).emit('match_forfeit', !redHas ? 'blue' : 'red');
-            // สำคัญ: ถ้าไม่มีคนอยู่เลย ให้ลบห้องทิ้งทันที!
-            if (!redHas && !blueHas) {
-                delete activeRooms[roomId];
-                io.emit('update_rooms', Object.values(activeRooms));
-            }
-        }
-    }
-}
-
-function reassignHost(r) {
-    let newHostFound = false;
-    ['red', 'blue'].forEach(t => {
-        for(let i=0; i<3; i++) {
-            if(r.slots[t][i] && r.slots[t][i].type === 'player') {
-                r.creatorId = r.slots[t][i].id; r.creator = r.slots[t][i].name;
-                newHostFound = true; break;
-            }
-        }
-        if(newHostFound) return;
-    });
-}
-
-function removePlayerFromRoomState(roomId, playerId) {
-    let room = activeRooms[roomId];
-    if(!room) return { room: null, removed: false, wasHost: false };
-
-    let removed = false;
-    let wasHost = room.creatorId === playerId;
-
-    ['red', 'blue'].forEach(team => {
-        for(let i=0; i<3; i++) {
-            if(room.slots[team][i] && room.slots[team][i].id === playerId) {
-                room.slots[team][i] = null;
-                removed = true;
-            }
-        }
-    });
-
-    if(removed && wasHost) reassignHost(room);
-    return { room, removed, wasHost };
-}
-
 io.on('connection', (socket) => {
-    console.log('🔥 PLAYER CONNECTED:', socket.id);
-
     socket.on('get_rooms', () => { cleanEmptyRooms(); });
 
     socket.on('create_room', (data) => {
@@ -94,17 +39,18 @@ io.on('connection', (socket) => {
 
     socket.on('auto_join', (data) => {
         let r = activeRooms[data.roomId];
-        if(!r) { socket.emit('error', 'Room not found. It may have been closed.'); cleanEmptyRooms(); return; }
-        if (r.isPrivate && data.pin !== r.pin) { socket.emit('error', 'Incorrect PIN. Please try again.'); return; }
+        if(!r) { socket.emit('error', 'Room not found.'); cleanEmptyRooms(); return; }
+        if(r.matchStarted) { socket.emit('error', 'Match already started.'); return; }
+        if(r.isPrivate && data.pin !== r.pin) { socket.emit('error', 'Incorrect PIN.'); return; }
 
         let joined = false;
         for(let t of ['blue', 'red']) {
-            for(let i=0; i<3; i++) { if(!r.slots[t][i]) { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player', skin: data.skin, trail: data.trail, goal: data.goal }; joined = true; break; } }
+            for(let i=0; i<3; i++) { if(!r.slots[t][i]) { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player' }; joined = true; break; } }
             if(joined) break;
         }
         if(!joined) {
             for(let t of ['blue', 'red']) {
-                for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'bot') { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player', skin: data.skin, trail: data.trail, goal: data.goal }; joined = true; break; } }
+                for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'bot') { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player' }; joined = true; break; } }
                 if(joined) break;
             }
         }
@@ -112,78 +58,49 @@ io.on('connection', (socket) => {
         if(joined) {
             socket.rooms.forEach(room => { if (room !== socket.id && room !== data.roomId) socket.leave(room); });
             socket.join(data.roomId); io.to(data.roomId).emit('lobby_update', r);
-        } else { socket.emit('error', 'The room is currently full.'); }
+        } else { socket.emit('error', 'Room is full.'); }
     });
 
     socket.on('join_slot', (data) => {
         let r = activeRooms[data.roomId];
-        if(r && r.slots[data.team]) {
-            let targetSlot = r.slots[data.team][data.index];
-            if(targetSlot && targetSlot.type === 'player' && targetSlot.id !== socket.id) return;
+        if(r && r.slots[data.team] && !r.matchStarted) {
+            if(r.slots[data.team][data.index] && r.slots[data.team][data.index].type === 'player' && r.slots[data.team][data.index].id !== socket.id) return;
             ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) r.slots[t][i] = null; } });
-            r.slots[data.team][data.index] = { id: socket.id, name: data.name, type: 'player', skin: data.skin, trail: data.trail, goal: data.goal };
+            r.slots[data.team][data.index] = { id: socket.id, name: data.name, type: 'player' };
             socket.join(data.roomId); io.to(data.roomId).emit('lobby_update', r);
         }
     });
 
     socket.on('add_bot', (data) => {
         let r = activeRooms[data.roomId];
-        if(r && r.slots[data.team]) {
-            r.slots[data.team][data.index] = { id: 'BOT_' + Math.random().toString(36).substr(2, 9), name: 'BOT', type: 'bot', skin: data.skin, trail: data.trail, goal: data.goal };
+        if(r && r.slots[data.team] && !r.matchStarted) {
+            r.slots[data.team][data.index] = { id: 'BOT_' + Math.random().toString(36).substr(2, 9), name: 'BOT', type: 'bot' };
             io.to(data.roomId).emit('lobby_update', r);
         }
     });
 
-    socket.on('update_loadout', (data) => {
-        let r = activeRooms[data.roomId];
-        if (r && r.slots[data.team] && r.slots[data.team][data.index] && r.slots[data.team][data.index].id === socket.id) {
-            r.slots[data.team][data.index].skin = data.skin; r.slots[data.team][data.index].trail = data.trail; r.slots[data.team][data.index].goal = data.goal;
-            io.to(data.roomId).emit('lobby_update', r); io.to(data.roomId).emit('player_loadout_updated', {id: socket.id, skin: data.skin, trail: data.trail, goal: data.goal});
-        }
-    });
-
-    socket.on('leave_room', (roomId) => {
-        let roomState = removePlayerFromRoomState(roomId, socket.id);
-        let room = roomState.room;
-
-        if(room) {
-            if(room.matchStarted) io.to(roomId).emit('player_left_midgame', socket.id);
-            checkMatchForfeit(roomId);
-
-            let isEmpty = true;
-            ['red', 'blue'].forEach(team => {
-                for(let i=0; i<3; i++) {
-                    if(room.slots[team][i] && room.slots[team][i].type === 'player') isEmpty = false;
-                }
-            });
-
-            if(isEmpty) {
-                delete activeRooms[roomId];
-                io.emit('update_rooms', Object.values(activeRooms));
-            } else {
-                io.to(roomId).emit('lobby_update', room);
-            }
-        }
-
-        socket.leave(roomId);
-        cleanEmptyRooms();
-    });
+    socket.on('leave_room', (roomId) => { socket.leave(roomId); cleanEmptyRooms(); });
 
     socket.on('remove_slot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
             let removedId = r.slots[data.team][data.index]?.id;
             r.slots[data.team][data.index] = null;
+            if (removedId === socket.id) socket.leave(data.roomId);
             
-            if (r.matchStarted && removedId) io.to(data.roomId).emit('player_left_midgame', removedId);
-            checkMatchForfeit(data.roomId);
-            if(removedId === r.creatorId) reassignHost(r);
-            
-            let isEmpty = true;
-            ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; } });
+            let isEmpty = true; let redHas = false; let blueHas = false;
+            ['red', 'blue'].forEach(t => { 
+                for(let i=0; i<3; i++) { 
+                    if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; 
+                    if(r.slots[t][i]) { if(t==='red') redHas=true; else blueHas=true; }
+                } 
+            });
 
             if(isEmpty) { delete activeRooms[data.roomId]; cleanEmptyRooms(); } 
-            else { io.to(data.roomId).emit('lobby_update', r); }
+            else { 
+                if(r.matchStarted && (!redHas || !blueHas)) { r.matchStarted = false; io.to(data.roomId).emit('match_forfeit', !redHas ? 'blue' : 'red'); }
+                io.to(data.roomId).emit('lobby_update', r); 
+            }
         }
     });
 
@@ -191,46 +108,32 @@ io.on('connection', (socket) => {
         if(activeRooms[roomId]) { activeRooms[roomId].matchStarted = true; io.to(roomId).emit('match_started', activeRooms[roomId]); }
     });
 
-    socket.on('request_midgame_spawn', (roomId) => {
-        let r = activeRooms[roomId];
-        if(r && r.matchStarted) {
-            let sData = null; let sTeam = null; let sIdx = 0;
-            ['red','blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) { sData = r.slots[t][i]; sTeam = t; sIdx = i; } } });
-            if(sData) io.to(roomId).emit('spawn_midgame_player', { team: sTeam, index: sIdx, player: sData, roomData: r });
-        }
-    });
-
-    socket.on('full_sync', (data) => { socket.to(data.roomId).emit('full_sync_data', data); });
     socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
     socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
-    socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
-    socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
-    socket.on('bump_player', (data) => { socket.to(data.roomId).emit('player_bumped', data); });
 
     socket.on('disconnect', () => {
-        console.log('💀 PLAYER DISCONNECTED:', socket.id);
         for(let rId in activeRooms) {
-            let roomState = removePlayerFromRoomState(rId, socket.id);
-            let r = roomState.room;
+            let r = activeRooms[rId];
+            let changed = false;
+            ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) { r.slots[t][i] = null; changed = true; } } });
 
-            if(roomState.removed) {
-                if(r.matchStarted) io.to(rId).emit('player_left_midgame', socket.id);
-                checkMatchForfeit(rId);
-
-                let isEmpty = true;
-                ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; } });
+            if(changed) {
+                let isEmpty = true; let redHas = false; let blueHas = false;
+                ['red', 'blue'].forEach(t => { 
+                    for(let i=0; i<3; i++) { 
+                        if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; 
+                        if(r.slots[t][i]) { if(t==='red') redHas=true; else blueHas=true; }
+                    } 
+                });
                 if(isEmpty) { delete activeRooms[rId]; } 
-                else { io.to(rId).emit('lobby_update', r); }
+                else { 
+                    if(r.matchStarted && (!redHas || !blueHas)) { r.matchStarted = false; io.to(rId).emit('match_forfeit', !redHas ? 'blue' : 'red'); }
+                    io.to(rId).emit('lobby_update', r); 
+                }
             }
         }
         cleanEmptyRooms();
     });
 });
 
-const PORT = process.env.PORT || 3000;
-
-if (require.main === module) {
-    server.listen(PORT, () => { console.log(`🚀 SERVER IO IS RUNNING ON PORT: ${PORT}`); });
-}
-
-module.exports = { activeRooms, removePlayerFromRoomState, reassignHost };
+server.listen(process.env.PORT || 3000);
