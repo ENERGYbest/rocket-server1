@@ -31,16 +31,14 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_room', (data) => {
+        // เคลียร์ห้องเก่าทิ้งให้หมดก่อนสร้างใหม่
+        socket.rooms.forEach(room => { if (room !== socket.id) socket.leave(room); });
+        
         const roomId = 'R_' + Date.now();
         activeRooms[roomId] = { 
-            id: roomId, 
-            name: data.name, 
-            map: data.map, 
-            isPrivate: data.isPrivate,
-            pin: data.pin,
-            allowBots: data.allowBots,
-            creator: data.creator,
-            creatorId: socket.id,
+            id: roomId, name: data.name, map: data.map, 
+            isPrivate: data.isPrivate, pin: data.pin, allowBots: data.allowBots,
+            creator: data.creator, creatorId: socket.id,
             slots: { red: [null, null, null], blue: [null, null, null] } 
         };
         socket.join(roomId);
@@ -50,20 +48,17 @@ io.on('connection', (socket) => {
 
     socket.on('auto_join', (data) => {
         let r = activeRooms[data.roomId];
-        
         if(!r) {
             socket.emit('error', 'Room not found. It may have been closed.');
             socket.emit('update_rooms', Object.values(activeRooms)); 
             return;
         }
-
         if (r.isPrivate && data.pin !== r.pin) {
             socket.emit('error', 'Incorrect PIN. Please try again.');
             return;
         }
 
         let joined = false;
-        
         for(let t of ['blue', 'red']) {
             for(let i=0; i<3; i++) {
                 if(!r.slots[t][i]) {
@@ -73,7 +68,6 @@ io.on('connection', (socket) => {
             }
             if(joined) break;
         }
-        
         if(!joined) {
             for(let t of ['blue', 'red']) {
                 for(let i=0; i<3; i++) {
@@ -87,6 +81,8 @@ io.on('connection', (socket) => {
         }
 
         if(joined) {
+            // เคลียร์วิญญาณเก่าที่ค้างอยู่
+            socket.rooms.forEach(room => { if (room !== socket.id && room !== data.roomId) socket.leave(room); });
             socket.join(data.roomId);
             io.to(data.roomId).emit('lobby_update', r);
         } else {
@@ -99,16 +95,10 @@ io.on('connection', (socket) => {
         if(r && r.slots[data.team]) {
             let targetSlot = r.slots[data.team][data.index];
             if(targetSlot && targetSlot.type === 'player' && targetSlot.id !== socket.id) return;
-
             ['red', 'blue'].forEach(t => {
-                for(let i=0; i<3; i++) {
-                    if(r.slots[t][i] && r.slots[t][i].id === socket.id) r.slots[t][i] = null;
-                }
+                for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) r.slots[t][i] = null; }
             });
-            r.slots[data.team][data.index] = { 
-                id: socket.id, name: data.name, type: 'player', 
-                skin: data.skin, trail: data.trail, goal: data.goal 
-            };
+            r.slots[data.team][data.index] = { id: socket.id, name: data.name, type: 'player', skin: data.skin, trail: data.trail, goal: data.goal };
             socket.join(data.roomId);
             io.to(data.roomId).emit('lobby_update', r);
         }
@@ -117,14 +107,13 @@ io.on('connection', (socket) => {
     socket.on('add_bot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
-            r.slots[data.team][data.index] = { 
-                id: 'BOT_' + Math.random().toString(36).substr(2, 9), 
-                name: 'BOT', type: 'bot', 
-                skin: data.skin, trail: data.trail, goal: data.goal 
-            };
+            r.slots[data.team][data.index] = { id: 'BOT_' + Math.random().toString(36).substr(2, 9), name: 'BOT', type: 'bot', skin: data.skin, trail: data.trail, goal: data.goal };
             io.to(data.roomId).emit('lobby_update', r);
         }
     });
+
+    // ยันต์กันผี: ใครกดออก เตะออกจาก Socket Room ให้หมด!
+    socket.on('leave_room', (roomId) => { socket.leave(roomId); });
 
     socket.on('remove_slot', (data) => {
         let r = activeRooms[data.roomId];
@@ -132,13 +121,17 @@ io.on('connection', (socket) => {
             let removedId = r.slots[data.team][data.index]?.id;
             r.slots[data.team][data.index] = null;
             
+            // เตะคนออก หรือเตะบอทออกให้สิ้นซาก
+            if (removedId === socket.id) { socket.leave(data.roomId); } 
+            else if (removedId) {
+                let targetSocket = io.sockets.sockets.get(removedId);
+                if (targetSocket) targetSocket.leave(data.roomId);
+            }
             if(removedId === r.creatorId) reassignHost(r);
             
             let isEmpty = true;
             ['red', 'blue'].forEach(t => {
-                for(let i=0; i<3; i++) {
-                    if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false;
-                }
+                for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; }
             });
 
             if(isEmpty) {
@@ -150,28 +143,13 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('start_match', (roomId) => {
-        if(activeRooms[roomId]) io.to(roomId).emit('match_started', activeRooms[roomId]);
-    });
-
-    socket.on('player_move', (data) => {
-        socket.to(data.roomId).emit('player_moved', { 
-            id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle 
-        });
-    });
-
-    socket.on('ball_hit', (data) => {
-        socket.to(data.roomId).emit('ball_sync', data);
-    });
-
-    // เพิ่ม Event ซิงค์ไอเท็มให้เครื่องอื่นรู้
-    socket.on('spawn_item', (data) => {
-        socket.to(data.roomId).emit('item_spawned', data.item);
-    });
-
-    socket.on('collect_item', (data) => {
-        socket.to(data.roomId).emit('item_collected', data.id);
-    });
+    socket.on('start_match', (roomId) => { if(activeRooms[roomId]) io.to(roomId).emit('match_started', activeRooms[roomId]); });
+    socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
+    socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
+    socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
+    
+    // ระบบแจกบัฟไอเทมผ่านเซิร์ฟเวอร์
+    socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
 
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
@@ -179,37 +157,24 @@ io.on('connection', (socket) => {
             let r = activeRooms[rId];
             let changed = false;
             let wasHost = (r.creatorId === socket.id);
-
             ['red', 'blue'].forEach(t => {
                 for(let i=0; i<3; i++) {
-                    if(r.slots[t][i] && r.slots[t][i].id === socket.id) {
-                        r.slots[t][i] = null;
-                        changed = true;
-                    }
+                    if(r.slots[t][i] && r.slots[t][i].id === socket.id) { r.slots[t][i] = null; changed = true; }
                 }
             });
 
             if(changed) {
                 let isEmpty = true;
                 ['red', 'blue'].forEach(t => {
-                    for(let i=0; i<3; i++) {
-                        if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false;
-                    }
+                    for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; }
                 });
 
-                if(isEmpty) {
-                    delete activeRooms[rId];
-                    io.emit('update_rooms', Object.values(activeRooms));
-                } else {
-                    if(wasHost) reassignHost(r); 
-                    io.to(rId).emit('lobby_update', r);
-                }
+                if(isEmpty) { delete activeRooms[rId]; io.emit('update_rooms', Object.values(activeRooms)); } 
+                else { if(wasHost) reassignHost(r); io.to(rId).emit('lobby_update', r); }
             }
         }
     });
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-    console.log(`🚀 SERVER IO IS RUNNING ON PORT: ${PORT}`);
-});
+server.listen(PORT, () => { console.log(`🚀 SERVER IO IS RUNNING ON PORT: ${PORT}`); });
