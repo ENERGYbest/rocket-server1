@@ -7,6 +7,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 let activeRooms = {};
+let globalLeaderboard = {}; // ระบบเก็บอันดับเซิร์ฟเวอร์!
 
 function cleanEmptyRooms() {
     for(let rId in activeRooms) {
@@ -21,6 +22,18 @@ function cleanEmptyRooms() {
 }
 
 io.on('connection', (socket) => {
+    
+    // รับข้อมูล Level ผู้เล่นมาจัดอันดับ
+    socket.on('update_level', (data) => {
+        if(data.name && data.level) {
+            if(!globalLeaderboard[data.name] || globalLeaderboard[data.name] < data.level) {
+                globalLeaderboard[data.name] = data.level;
+            }
+        }
+        let sorted = Object.entries(globalLeaderboard).sort((a, b) => b[1] - a[1]).slice(0, 10);
+        io.emit('leaderboard_data', sorted);
+    });
+
     socket.on('get_rooms', () => { cleanEmptyRooms(); });
 
     socket.on('create_room', (data) => {
@@ -108,18 +121,13 @@ io.on('connection', (socket) => {
         if(activeRooms[roomId]) { activeRooms[roomId].matchStarted = true; io.to(roomId).emit('match_started', activeRooms[roomId]); }
     });
 
-    // เพิ่มคำสั่ง Host สั่งกลับล็อบบี้
     socket.on('return_to_lobby', (roomId) => {
         let r = activeRooms[roomId];
-        if(r) {
-            r.matchStarted = false; // ปลดล็อคห้อง
-            io.to(roomId).emit('lobby_update', r);
-        }
+        if(r) { r.matchStarted = false; io.to(roomId).emit('lobby_update', r); }
     });
 
     socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
     socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
-    
     socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
     socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
     socket.on('bump_player', (data) => { socket.to(data.roomId).emit('player_bumped', data); });
