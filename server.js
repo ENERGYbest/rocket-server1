@@ -53,6 +53,26 @@ function reassignHost(r) {
     });
 }
 
+function removePlayerFromRoomState(roomId, playerId) {
+    let room = activeRooms[roomId];
+    if(!room) return { room: null, removed: false, wasHost: false };
+
+    let removed = false;
+    let wasHost = room.creatorId === playerId;
+
+    ['red', 'blue'].forEach(team => {
+        for(let i=0; i<3; i++) {
+            if(room.slots[team][i] && room.slots[team][i].id === playerId) {
+                room.slots[team][i] = null;
+                removed = true;
+            }
+        }
+    });
+
+    if(removed && wasHost) reassignHost(room);
+    return { room, removed, wasHost };
+}
+
 io.on('connection', (socket) => {
     console.log('🔥 PLAYER CONNECTED:', socket.id);
 
@@ -122,7 +142,32 @@ io.on('connection', (socket) => {
         }
     });
 
-    socket.on('leave_room', (roomId) => { socket.leave(roomId); cleanEmptyRooms(); });
+    socket.on('leave_room', (roomId) => {
+        let roomState = removePlayerFromRoomState(roomId, socket.id);
+        let room = roomState.room;
+
+        if(room) {
+            if(room.matchStarted) io.to(roomId).emit('player_left_midgame', socket.id);
+            checkMatchForfeit(roomId);
+
+            let isEmpty = true;
+            ['red', 'blue'].forEach(team => {
+                for(let i=0; i<3; i++) {
+                    if(room.slots[team][i] && room.slots[team][i].type === 'player') isEmpty = false;
+                }
+            });
+
+            if(isEmpty) {
+                delete activeRooms[roomId];
+                io.emit('update_rooms', Object.values(activeRooms));
+            } else {
+                io.to(roomId).emit('lobby_update', room);
+            }
+        }
+
+        socket.leave(roomId);
+        cleanEmptyRooms();
+    });
 
     socket.on('remove_slot', (data) => {
         let r = activeRooms[data.roomId];
@@ -165,17 +210,17 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
         for(let rId in activeRooms) {
-            let r = activeRooms[rId];
-            let changed = false; let wasHost = (r.creatorId === socket.id);
-            ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) { r.slots[t][i] = null; changed = true; } } });
+            let roomState = removePlayerFromRoomState(rId, socket.id);
+            let r = roomState.room;
 
-            if(changed) {
+            if(roomState.removed) {
                 if(r.matchStarted) io.to(rId).emit('player_left_midgame', socket.id);
                 checkMatchForfeit(rId);
+
                 let isEmpty = true;
                 ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; } });
                 if(isEmpty) { delete activeRooms[rId]; } 
-                else { if(wasHost) reassignHost(r); io.to(rId).emit('lobby_update', r); }
+                else { io.to(rId).emit('lobby_update', r); }
             }
         }
         cleanEmptyRooms();
@@ -183,4 +228,9 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => { console.log(`🚀 SERVER IO IS RUNNING ON PORT: ${PORT}`); });
+
+if (require.main === module) {
+    server.listen(PORT, () => { console.log(`🚀 SERVER IO IS RUNNING ON PORT: ${PORT}`); });
+}
+
+module.exports = { activeRooms, removePlayerFromRoomState, reassignHost };
