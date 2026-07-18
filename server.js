@@ -108,10 +108,18 @@ io.on('connection', (socket) => {
         if(activeRooms[roomId]) { activeRooms[roomId].matchStarted = true; io.to(roomId).emit('match_started', activeRooms[roomId]); }
     });
 
+    // เพิ่มคำสั่ง Host สั่งกลับล็อบบี้
+    socket.on('return_to_lobby', (roomId) => {
+        let r = activeRooms[roomId];
+        if(r) {
+            r.matchStarted = false; // ปลดล็อคห้อง
+            io.to(roomId).emit('lobby_update', r);
+        }
+    });
+
     socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
     socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
     
-    // ระบบไอเท็มสกิลพิเศษ
     socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
     socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
     socket.on('bump_player', (data) => { socket.to(data.roomId).emit('player_bumped', data); });
