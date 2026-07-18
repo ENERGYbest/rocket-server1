@@ -25,12 +25,17 @@ function checkMatchForfeit(roomId) {
     if(r && r.matchStarted) {
         let redHas = false, blueHas = false;
         for(let i=0; i<3; i++) {
-            if(r.slots['red'][i]) redHas = true;
-            if(r.slots['blue'][i]) blueHas = true;
+            if(r.slots['red'][i] && r.slots['red'][i].type === 'player') redHas = true;
+            if(r.slots['blue'][i] && r.slots['blue'][i].type === 'player') blueHas = true;
         }
         if(!redHas || !blueHas) {
             r.matchStarted = false;
             io.to(roomId).emit('match_forfeit', !redHas ? 'blue' : 'red');
+            // สำคัญ: ถ้าไม่มีคนอยู่เลย ให้ลบห้องทิ้งทันที!
+            if (!redHas && !blueHas) {
+                delete activeRooms[roomId];
+                io.emit('update_rooms', Object.values(activeRooms));
+            }
         }
     }
 }
