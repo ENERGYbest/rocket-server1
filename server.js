@@ -31,7 +31,6 @@ io.on('connection', (socket) => {
     });
 
     socket.on('create_room', (data) => {
-        // เคลียร์ห้องเก่าทิ้งให้หมดก่อนสร้างใหม่
         socket.rooms.forEach(room => { if (room !== socket.id) socket.leave(room); });
         
         const roomId = 'R_' + Date.now();
@@ -81,7 +80,6 @@ io.on('connection', (socket) => {
         }
 
         if(joined) {
-            // เคลียร์วิญญาณเก่าที่ค้างอยู่
             socket.rooms.forEach(room => { if (room !== socket.id && room !== data.roomId) socket.leave(room); });
             socket.join(data.roomId);
             io.to(data.roomId).emit('lobby_update', r);
@@ -112,7 +110,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // ยันต์กันผี: ใครกดออก เตะออกจาก Socket Room ให้หมด!
     socket.on('leave_room', (roomId) => { socket.leave(roomId); });
 
     socket.on('remove_slot', (data) => {
@@ -121,7 +118,6 @@ io.on('connection', (socket) => {
             let removedId = r.slots[data.team][data.index]?.id;
             r.slots[data.team][data.index] = null;
             
-            // เตะคนออก หรือเตะบอทออกให้สิ้นซาก
             if (removedId === socket.id) { socket.leave(data.roomId); } 
             else if (removedId) {
                 let targetSocket = io.sockets.sockets.get(removedId);
@@ -147,9 +143,12 @@ io.on('connection', (socket) => {
     socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
     socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
     socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
-    
-    // ระบบแจกบัฟไอเทมผ่านเซิร์ฟเวอร์
     socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
+
+    // ของใหม่! รับแรงกระแทกจากคนชน แล้วส่งให้เครื่องคนโดนชนกระเด็น
+    socket.on('bump_player', (data) => {
+        socket.to(data.roomId).emit('player_bumped', data);
+    });
 
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
