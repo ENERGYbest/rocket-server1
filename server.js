@@ -8,6 +8,22 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 let activeRooms = {};
 
+// ฟังก์ชั่นสืบทอดมรดกโฮสต์ (ถ้าโฮสต์หนี ให้คนอื่นเป็นแทน)
+function reassignHost(r) {
+    let newHostFound = false;
+    ['red', 'blue'].forEach(t => {
+        for(let i=0; i<3; i++) {
+            if(r.slots[t][i] && r.slots[t][i].type === 'player') {
+                r.creatorId = r.slots[t][i].id;
+                r.creator = r.slots[t][i].name;
+                newHostFound = true;
+                break;
+            }
+        }
+        if(newHostFound) return;
+    });
+}
+
 io.on('connection', (socket) => {
     console.log('🔥 PLAYER CONNECTED:', socket.id);
 
@@ -33,9 +49,52 @@ io.on('connection', (socket) => {
         io.emit('update_rooms', Object.values(activeRooms));
     });
 
+    // แก้บัคแย่งเก้าอี้ดนตรี: หาที่ว่างให้ลงอัตโนมัติ
+    socket.on('auto_join', (data) => {
+        let r = activeRooms[data.roomId];
+        if(!r) return;
+        let joined = false;
+        
+        // หาช่องว่างที่ไม่มีคนก่อน
+        for(let t of ['blue', 'red']) {
+            for(let i=0; i<3; i++) {
+                if(!r.slots[t][i]) {
+                    r.slots[t][i] = { id: socket.id, name: data.name, type: 'player', skin: data.skin, trail: data.trail, goal: data.goal };
+                    joined = true; break;
+                }
+            }
+            if(joined) break;
+        }
+        
+        // ถ้าเต็มแล้ว ลองเตะบอทออกเพื่อเสียบแทน
+        if(!joined) {
+            for(let t of ['blue', 'red']) {
+                for(let i=0; i<3; i++) {
+                    if(r.slots[t][i] && r.slots[t][i].type === 'bot') {
+                        r.slots[t][i] = { id: socket.id, name: data.name, type: 'player', skin: data.skin, trail: data.trail, goal: data.goal };
+                        joined = true; break;
+                    }
+                }
+                if(joined) break;
+            }
+        }
+
+        if(joined) {
+            socket.join(data.roomId);
+            io.to(data.roomId).emit('lobby_update', r);
+        } else {
+            socket.emit('error', 'ROOM IS FULL (ห้องเต็มแล้วย่ะ!)');
+        }
+    });
+
     socket.on('join_slot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
+            // เช็คก่อนว่าช่องนั้นมีคนอยู่ไหม ถ้ามีคน(ที่ไม่ใช่ตัวเอง)และไม่ใช่บอท ห้ามทับ!
+            let targetSlot = r.slots[data.team][data.index];
+            if(targetSlot && targetSlot.type === 'player' && targetSlot.id !== socket.id) return;
+
+            // ลบตัวเองออกจากช่องเก่าก่อน
             ['red', 'blue'].forEach(t => {
                 for(let i=0; i<3; i++) {
                     if(r.slots[t][i] && r.slots[t][i].id === socket.id) r.slots[t][i] = null;
@@ -65,7 +124,10 @@ io.on('connection', (socket) => {
     socket.on('remove_slot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
+            let removedId = r.slots[data.team][data.index]?.id;
             r.slots[data.team][data.index] = null;
+            
+            if(removedId === r.creatorId) reassignHost(r); // โอนสิทธิ์โฮสต์
             io.to(data.roomId).emit('lobby_update', r);
         }
     });
@@ -89,6 +151,8 @@ io.on('connection', (socket) => {
         for(let rId in activeRooms) {
             let r = activeRooms[rId];
             let changed = false;
+            let wasHost = (r.creatorId === socket.id);
+
             ['red', 'blue'].forEach(t => {
                 for(let i=0; i<3; i++) {
                     if(r.slots[t][i] && r.slots[t][i].id === socket.id) {
@@ -97,6 +161,7 @@ io.on('connection', (socket) => {
                     }
                 }
             });
+
             if(changed) {
                 let isEmpty = true;
                 ['red', 'blue'].forEach(t => {
@@ -104,10 +169,12 @@ io.on('connection', (socket) => {
                         if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false;
                     }
                 });
+
                 if(isEmpty) {
                     delete activeRooms[rId];
                     io.emit('update_rooms', Object.values(activeRooms));
                 } else {
+                    if(wasHost) reassignHost(r); // โฮสต์ออก โอนสิทธิ์ด่วน!
                     io.to(rId).emit('lobby_update', r);
                 }
             }
