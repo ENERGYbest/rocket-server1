@@ -45,12 +45,12 @@ io.on('connection', (socket) => {
 
         let joined = false;
         for(let t of ['blue', 'red']) {
-            for(let i=0; i<3; i++) { if(!r.slots[t][i]) { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player' }; joined = true; break; } }
+            for(let i=0; i<3; i++) { if(!r.slots[t][i]) { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player', level: data.level }; joined = true; break; } }
             if(joined) break;
         }
         if(!joined) {
             for(let t of ['blue', 'red']) {
-                for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'bot') { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player' }; joined = true; break; } }
+                for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].type === 'bot') { r.slots[t][i] = { id: socket.id, name: data.name, type: 'player', level: data.level }; joined = true; break; } }
                 if(joined) break;
             }
         }
@@ -66,7 +66,7 @@ io.on('connection', (socket) => {
         if(r && r.slots[data.team] && !r.matchStarted) {
             if(r.slots[data.team][data.index] && r.slots[data.team][data.index].type === 'player' && r.slots[data.team][data.index].id !== socket.id) return;
             ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) r.slots[t][i] = null; } });
-            r.slots[data.team][data.index] = { id: socket.id, name: data.name, type: 'player' };
+            r.slots[data.team][data.index] = { id: socket.id, name: data.name, type: 'player', level: data.level };
             socket.join(data.roomId); io.to(data.roomId).emit('lobby_update', r);
         }
     });
@@ -74,7 +74,7 @@ io.on('connection', (socket) => {
     socket.on('add_bot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team] && !r.matchStarted) {
-            r.slots[data.team][data.index] = { id: 'BOT_' + Math.random().toString(36).substr(2, 9), name: 'BOT', type: 'bot' };
+            r.slots[data.team][data.index] = { id: 'BOT_' + Math.random().toString(36).substr(2, 9), name: 'BOT', type: 'bot', level: 1 };
             io.to(data.roomId).emit('lobby_update', r);
         }
     });
@@ -110,6 +110,11 @@ io.on('connection', (socket) => {
 
     socket.on('player_move', (data) => { socket.to(data.roomId).emit('player_moved', { id: data.id || socket.id, x: data.x, y: data.y, angle: data.angle }); });
     socket.on('ball_hit', (data) => { socket.to(data.roomId).emit('ball_sync', data); });
+    
+    // ระบบไอเท็มสกิลพิเศษ
+    socket.on('spawn_item', (data) => { socket.to(data.roomId).emit('item_spawned', data.item); });
+    socket.on('collect_item', (data) => { io.to(data.roomId).emit('item_collected', data); });
+    socket.on('bump_player', (data) => { socket.to(data.roomId).emit('player_bumped', data); });
 
     socket.on('disconnect', () => {
         for(let rId in activeRooms) {
