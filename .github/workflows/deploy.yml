@@ -1,0 +1,29 @@
+name: Auto Deploy ฉบับตัวมารดา 💅✨
+
+on:
+  push:
+    branches:
+      - main # เวลาหล่อน Push ลงกิ่ง main ปุ๊บ ให้มันทำงานทันที!
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 📥 ดึงโค้ดลงมาดูหน่อยซิ
+        uses: actions/checkout@v3
+
+      - name: ⚙️ เซ็ตอัป Node.js ให้พร้อมเสิร์ฟแบบเริ่ดๆ
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18' # เวอร์ชั่นกันตาย
+
+      - name: 📦 โหลดของแป๊บ (Install Dependencies)
+        run: npm install
+
+      - name: 🚀 ปล่อยยานนนน! Deploy Now! 
+        run: |
+          echo "ตู้มมมม! กลายเป็นโกโก้ครั้นช์! เริ่มรันสคริปต์ Deploy จ้า!"
+          # ถ้าหล่อนใช้บริการอย่าง Vercel, Render หรือ Railway มันจะออโต้ให้อยู่แล้ว
+          # แต่ถ้ามีเซิร์ฟเวอร์ส่วนตัว ก็ใส่คำสั่ง deploy ของหล่อนตรงนี้เลย 
+          # เช่น npm run build หรือคำสั่งยิง FTP ชิคๆ
