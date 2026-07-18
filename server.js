@@ -49,10 +49,22 @@ io.on('connection', (socket) => {
         io.emit('update_rooms', Object.values(activeRooms));
     });
 
-    // แก้บัคแย่งเก้าอี้ดนตรี: หาที่ว่างให้ลงอัตโนมัติ
+    // แก้บัคแย่งเก้าอี้ดนตรี & บัคหมุนติ้วๆ
     socket.on('auto_join', (data) => {
         let r = activeRooms[data.roomId];
-        if(!r) return;
+        // ถ้าหาห้องไม่เจอ (ห้องผีหลอก) ให้ด่ากลับไป! หน้าเว็บจะได้เลิกหมุน
+        if(!r) {
+            socket.emit('error', 'ROOM NOT FOUND (ห้องโดนยุบไปแล้วย่ะคุณน้า!)');
+            socket.emit('update_rooms', Object.values(activeRooms)); // อัปเดตหน้าล็อบบี้ใหม่ด้วย
+            return;
+        }
+
+        // เช็ครหัสผ่าน ถ้าห้องล็อคแล้วรหัสผิด ก็เด้งด่ากลับไป!
+        if (r.isPrivate && data.pin !== r.pin) {
+            socket.emit('error', 'INCORRECT PIN (รหัสผิดย่ะ ไปจำมาใหม่!)');
+            return;
+        }
+
         let joined = false;
         
         // หาช่องว่างที่ไม่มีคนก่อน
@@ -90,11 +102,9 @@ io.on('connection', (socket) => {
     socket.on('join_slot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
-            // เช็คก่อนว่าช่องนั้นมีคนอยู่ไหม ถ้ามีคน(ที่ไม่ใช่ตัวเอง)และไม่ใช่บอท ห้ามทับ!
             let targetSlot = r.slots[data.team][data.index];
             if(targetSlot && targetSlot.type === 'player' && targetSlot.id !== socket.id) return;
 
-            // ลบตัวเองออกจากช่องเก่าก่อน
             ['red', 'blue'].forEach(t => {
                 for(let i=0; i<3; i++) {
                     if(r.slots[t][i] && r.slots[t][i].id === socket.id) r.slots[t][i] = null;
@@ -121,14 +131,29 @@ io.on('connection', (socket) => {
         }
     });
 
+    // แก้บัคห้องร้าง เวลาคนกด Leave Lobby
     socket.on('remove_slot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
             let removedId = r.slots[data.team][data.index]?.id;
             r.slots[data.team][data.index] = null;
             
-            if(removedId === r.creatorId) reassignHost(r); // โอนสิทธิ์โฮสต์
-            io.to(data.roomId).emit('lobby_update', r);
+            if(removedId === r.creatorId) reassignHost(r);
+            
+            // เช็คว่าห้องว่างมั้ย ถ้าว่างก็ทุบทิ้งไปเลย!
+            let isEmpty = true;
+            ['red', 'blue'].forEach(t => {
+                for(let i=0; i<3; i++) {
+                    if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false;
+                }
+            });
+
+            if(isEmpty) {
+                delete activeRooms[data.roomId];
+                io.emit('update_rooms', Object.values(activeRooms));
+            } else {
+                io.to(data.roomId).emit('lobby_update', r);
+            }
         }
     });
 
@@ -146,6 +171,7 @@ io.on('connection', (socket) => {
         socket.to(data.roomId).emit('ball_sync', data);
     });
 
+    // เช็คห้องร้างเวลาคนดึงปลั๊กเน็ตหลุด (Disconnect)
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
         for(let rId in activeRooms) {
@@ -174,7 +200,7 @@ io.on('connection', (socket) => {
                     delete activeRooms[rId];
                     io.emit('update_rooms', Object.values(activeRooms));
                 } else {
-                    if(wasHost) reassignHost(r); // โฮสต์ออก โอนสิทธิ์ด่วน!
+                    if(wasHost) reassignHost(r); 
                     io.to(rId).emit('lobby_update', r);
                 }
             }
