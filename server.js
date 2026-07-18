@@ -8,7 +8,6 @@ const io = new Server(server, { cors: { origin: "*" } });
 
 let activeRooms = {};
 
-// ฟังก์ชั่นสืบทอดมรดกโฮสต์ (ถ้าโฮสต์หนี ให้คนอื่นเป็นแทน)
 function reassignHost(r) {
     let newHostFound = false;
     ['red', 'blue'].forEach(t => {
@@ -49,25 +48,22 @@ io.on('connection', (socket) => {
         io.emit('update_rooms', Object.values(activeRooms));
     });
 
-    // แก้บัคแย่งเก้าอี้ดนตรี & บัคหมุนติ้วๆ
     socket.on('auto_join', (data) => {
         let r = activeRooms[data.roomId];
-        // ถ้าหาห้องไม่เจอ (ห้องผีหลอก) ให้ด่ากลับไป! หน้าเว็บจะได้เลิกหมุน
+        
         if(!r) {
-            socket.emit('error', 'ROOM NOT FOUND (ห้องโดนยุบไปแล้วย่ะคุณน้า!)');
-            socket.emit('update_rooms', Object.values(activeRooms)); // อัปเดตหน้าล็อบบี้ใหม่ด้วย
+            socket.emit('error', 'Room not found. It may have been closed.');
+            socket.emit('update_rooms', Object.values(activeRooms)); 
             return;
         }
 
-        // เช็ครหัสผ่าน ถ้าห้องล็อคแล้วรหัสผิด ก็เด้งด่ากลับไป!
         if (r.isPrivate && data.pin !== r.pin) {
-            socket.emit('error', 'INCORRECT PIN (รหัสผิดย่ะ ไปจำมาใหม่!)');
+            socket.emit('error', 'Incorrect PIN. Please try again.');
             return;
         }
 
         let joined = false;
         
-        // หาช่องว่างที่ไม่มีคนก่อน
         for(let t of ['blue', 'red']) {
             for(let i=0; i<3; i++) {
                 if(!r.slots[t][i]) {
@@ -78,7 +74,6 @@ io.on('connection', (socket) => {
             if(joined) break;
         }
         
-        // ถ้าเต็มแล้ว ลองเตะบอทออกเพื่อเสียบแทน
         if(!joined) {
             for(let t of ['blue', 'red']) {
                 for(let i=0; i<3; i++) {
@@ -95,7 +90,7 @@ io.on('connection', (socket) => {
             socket.join(data.roomId);
             io.to(data.roomId).emit('lobby_update', r);
         } else {
-            socket.emit('error', 'ROOM IS FULL (ห้องเต็มแล้วย่ะ!)');
+            socket.emit('error', 'The room is currently full.');
         }
     });
 
@@ -131,7 +126,6 @@ io.on('connection', (socket) => {
         }
     });
 
-    // แก้บัคห้องร้าง เวลาคนกด Leave Lobby
     socket.on('remove_slot', (data) => {
         let r = activeRooms[data.roomId];
         if(r && r.slots[data.team]) {
@@ -140,7 +134,6 @@ io.on('connection', (socket) => {
             
             if(removedId === r.creatorId) reassignHost(r);
             
-            // เช็คว่าห้องว่างมั้ย ถ้าว่างก็ทุบทิ้งไปเลย!
             let isEmpty = true;
             ['red', 'blue'].forEach(t => {
                 for(let i=0; i<3; i++) {
@@ -171,7 +164,6 @@ io.on('connection', (socket) => {
         socket.to(data.roomId).emit('ball_sync', data);
     });
 
-    // เช็คห้องร้างเวลาคนดึงปลั๊กเน็ตหลุด (Disconnect)
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
         for(let rId in activeRooms) {
