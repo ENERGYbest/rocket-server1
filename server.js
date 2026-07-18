@@ -23,7 +23,6 @@ function cleanEmptyRooms() {
 
 io.on('connection', (socket) => {
     
-    // ระบบ Global Chat
     socket.on('send_chat', (data) => {
         io.emit('receive_chat', { name: data.name, msg: data.msg });
     });
@@ -105,17 +104,34 @@ io.on('connection', (socket) => {
             r.slots[data.team][data.index] = null;
             if (removedId === socket.id) socket.leave(data.roomId);
             
-            let isEmpty = true; let redHas = false; let blueHas = false;
+            let isEmpty = true; let redHuman = false; let blueHuman = false;
+            let nextHost = null;
+
             ['red', 'blue'].forEach(t => { 
                 for(let i=0; i<3; i++) { 
-                    if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; 
-                    if(r.slots[t][i]) { if(t==='red') redHas=true; else blueHas=true; }
+                    let s = r.slots[t][i];
+                    if(s && s.type === 'player') {
+                        isEmpty = false; 
+                        if(t==='red') redHuman=true; else blueHuman=true;
+                        // หาคนมารับตำแหน่ง Host แทนถ้า Host ตัวจริงหนี
+                        if(!nextHost && s.id !== socket.id) nextHost = s; 
+                    }
                 } 
             });
 
-            if(isEmpty) { delete activeRooms[data.roomId]; cleanEmptyRooms(); } 
-            else { 
-                if(r.matchStarted && (!redHas || !blueHas)) { r.matchStarted = false; io.to(data.roomId).emit('match_forfeit', !redHas ? 'blue' : 'red'); }
+            if(isEmpty) { 
+                delete activeRooms[data.roomId]; cleanEmptyRooms(); 
+            } else { 
+                // ระบบโอน Host
+                if (r.creatorId === socket.id && nextHost) {
+                    r.creatorId = nextHost.id;
+                    r.creator = nextHost.name;
+                }
+                // ถ้าทีมไหนไม่มีคนจริงเหลืออยู่เลย ให้ยุบห้องแจกชัยชนะไปเลย
+                if(r.matchStarted && (!redHuman || !blueHuman)) { 
+                    r.matchStarted = false; 
+                    io.to(data.roomId).emit('match_forfeit', !redHuman ? 'blue' : 'red'); 
+                }
                 io.to(data.roomId).emit('lobby_update', r); 
             }
         }
@@ -123,6 +139,15 @@ io.on('connection', (socket) => {
 
     socket.on('start_match', (roomId) => { 
         if(activeRooms[roomId]) { activeRooms[roomId].matchStarted = true; io.to(roomId).emit('match_started', activeRooms[roomId]); }
+    });
+
+    // บังคับการนับคะแนน ให้ผ่านศูนย์กลาง (Host) เท่านั้น
+    socket.on('goal_scored', (data) => {
+        let r = activeRooms[data.roomId];
+        // ตรวจสอบว่าเป็น Host จริงๆ ค่อยให้คะแนน
+        if (r && r.creatorId === socket.id) {
+            io.to(data.roomId).emit('force_goal', data);
+        }
     });
 
     socket.on('return_to_lobby', (roomId) => {
@@ -139,20 +164,38 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         for(let rId in activeRooms) {
             let r = activeRooms[rId];
-            let changed = false; let wasHost = (r.creatorId === socket.id);
+            let changed = false; 
             ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) { r.slots[t][i] = null; changed = true; } } });
 
             if(changed) {
-                let isEmpty = true; let redHas = false; let blueHas = false;
+                let isEmpty = true; let redHuman = false; let blueHuman = false;
+                let nextHost = null;
+
                 ['red', 'blue'].forEach(t => { 
                     for(let i=0; i<3; i++) { 
-                        if(r.slots[t][i] && r.slots[t][i].type === 'player') isEmpty = false; 
-                        if(r.slots[t][i]) { if(t==='red') redHas=true; else blueHas=true; }
+                        let s = r.slots[t][i];
+                        if(s && s.type === 'player') {
+                            isEmpty = false; 
+                            if(t==='red') redHuman=true; else blueHuman=true;
+                            // หาคนมารับตำแหน่ง Host
+                            if(!nextHost && s.id !== socket.id) nextHost = s; 
+                        }
                     } 
                 });
-                if(isEmpty) { delete activeRooms[rId]; } 
-                else { 
-                    if(r.matchStarted && (!redHas || !blueHas)) { r.matchStarted = false; io.to(rId).emit('match_forfeit', !redHas ? 'blue' : 'red'); }
+
+                if(isEmpty) { 
+                    delete activeRooms[rId]; 
+                } else { 
+                    // โอนสิทธิ์ Host
+                    if (r.creatorId === socket.id && nextHost) {
+                        r.creatorId = nextHost.id;
+                        r.creator = nextHost.name;
+                    }
+                    // เช็คห้องแตก
+                    if(r.matchStarted && (!redHuman || !blueHuman)) { 
+                        r.matchStarted = false; 
+                        io.to(rId).emit('match_forfeit', !redHuman ? 'blue' : 'red'); 
+                    }
                     io.to(rId).emit('lobby_update', r); 
                 }
             }
