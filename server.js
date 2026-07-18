@@ -164,6 +164,15 @@ io.on('connection', (socket) => {
         socket.to(data.roomId).emit('ball_sync', data);
     });
 
+    // เพิ่ม Event ซิงค์ไอเท็มให้เครื่องอื่นรู้
+    socket.on('spawn_item', (data) => {
+        socket.to(data.roomId).emit('item_spawned', data.item);
+    });
+
+    socket.on('collect_item', (data) => {
+        socket.to(data.roomId).emit('item_collected', data.id);
+    });
+
     socket.on('disconnect', () => {
         console.log('💀 PLAYER DISCONNECTED:', socket.id);
         for(let rId in activeRooms) {
