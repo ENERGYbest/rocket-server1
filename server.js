@@ -7,7 +7,7 @@ const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: "*" } });
 
 let activeRooms = {};
-let globalLeaderboard = {}; // ระบบเก็บอันดับเซิร์ฟเวอร์!
+let globalLeaderboard = {}; 
 
 function cleanEmptyRooms() {
     for(let rId in activeRooms) {
@@ -23,7 +23,11 @@ function cleanEmptyRooms() {
 
 io.on('connection', (socket) => {
     
-    // รับข้อมูล Level ผู้เล่นมาจัดอันดับ
+    // ระบบ Global Chat
+    socket.on('send_chat', (data) => {
+        io.emit('receive_chat', { name: data.name, msg: data.msg });
+    });
+
     socket.on('update_level', (data) => {
         if(data.name && data.level) {
             if(!globalLeaderboard[data.name] || globalLeaderboard[data.name] < data.level) {
@@ -135,7 +139,7 @@ io.on('connection', (socket) => {
     socket.on('disconnect', () => {
         for(let rId in activeRooms) {
             let r = activeRooms[rId];
-            let changed = false;
+            let changed = false; let wasHost = (r.creatorId === socket.id);
             ['red', 'blue'].forEach(t => { for(let i=0; i<3; i++) { if(r.slots[t][i] && r.slots[t][i].id === socket.id) { r.slots[t][i] = null; changed = true; } } });
 
             if(changed) {
